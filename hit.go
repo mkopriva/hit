@@ -25,23 +25,23 @@ const (
 )
 
 var (
-	carnationColor = "\033[91m"
-	yellowColor    = "\033[93m"
-	purpleColor    = "\033[95m"
-	cyanColor      = "\033[96m"
-	stopColor      = "\033[0m"
+	redColor    = "\033[91m"
+	yellowColor = "\033[93m"
+	purpleColor = "\033[95m"
+	cyanColor   = "\033[96m"
+	stopColor   = "\033[0m"
 
 	boundary   = "testboundary"
 	multi      = "multipart/form-data; boundary=" + boundary
 	urlencoded = "application/x-www-form-urlencoded"
 )
 
-type Test struct {
+type Hit struct {
 	Path     string
 	Requests Methods
 }
 
-func (tst Test) Run(t *testing.T) {
+func (tst Hit) Test(t *testing.T) {
 	for m, rr := range tst.Requests {
 		for _, r := range rr {
 			err := r.Execute(m, tst.Path)
@@ -74,7 +74,7 @@ func (r Request) Execute(method, path string) error {
 	}
 	if err = r.Want.Compare(res); err != nil {
 		msg := fmt.Sprintf(" %s%s %s%s Header: %s%v%s",
-			carnationColor,
+			redColor,
 			method,
 			path,
 			stopColor,
@@ -83,7 +83,7 @@ func (r Request) Execute(method, path string) error {
 			stopColor,
 		)
 		if r.Body != nil {
-			msg += fmt.Sprintf(" Body: %s%v%s", carnationColor, r.Body, stopColor)
+			msg += fmt.Sprintf(" Body: %s%v%s", redColor, r.Body, stopColor)
 		}
 		return errors.New(fmt.Sprintf("%s\n%s", msg, err.Error()))
 	}
@@ -98,12 +98,12 @@ type Response struct {
 
 func (r Response) Compare(res *http.Response) error {
 	var msg string
-	// compare response status
+	// compare status
 	if res.StatusCode != r.Status {
 		msg = fmt.Sprintf("StatusCode got = %d, want %d", res.StatusCode, r.Status)
 	}
 
-	// compare response header
+	// compare header
 	for k, v := range r.Header {
 		val := res.Header.Get(k)
 		if val != v[0] {
@@ -114,25 +114,30 @@ func (r Response) Compare(res *http.Response) error {
 		}
 	}
 
-	// compare response body
+	// compare body
 	if len(r.Body) > 0 {
 		var (
 			got  = make(map[string]interface{})
 			want = make(map[string]interface{})
 		)
 
-		b, err := ioutil.ReadAll(res.Body)
-		if err != nil {
+		dec := json.NewDecoder(res.Body)
+		if err := dec.Decode(&got); err != nil {
 			panic(err)
 		}
-		if err = json.Unmarshal(b, &got); err != nil {
-			panic(err)
-		}
-		if err = json.Unmarshal([]byte(r.Body), &want); err != nil {
+		dec = json.NewDecoder(strings.NewReader(r.Body))
+		if err := dec.Decode(&want); err != nil {
 			panic(err)
 		}
 		if !reflect.DeepEqual(got, want) {
-			msg += fmt.Sprintf("Body got %v, want %v", got, want)
+			msg += fmt.Sprintf("Body got %s%v%s, want %s%v%s",
+				yellowColor,
+				got,
+				stopColor,
+				yellowColor,
+				want,
+				stopColor,
+			)
 		}
 	}
 
