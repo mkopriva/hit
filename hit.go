@@ -2,6 +2,7 @@ package hit
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,17 +11,26 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 )
 
+const (
+	Addr = "localhost:3456"
+)
+
 var (
-	redColor    = "\033[91m"
-	yellowColor = "\033[93m"
-	purpleColor = "\033[95m"
-	cyanColor   = "\033[96m"
-	stopColor   = "\033[0m"
+	carnationColor = "\033[91m"
+	yellowColor    = "\033[93m"
+	purpleColor    = "\033[95m"
+	cyanColor      = "\033[96m"
+	stopColor      = "\033[0m"
+
+	boundary   = "testboundary"
+	multi      = "multipart/form-data; boundary=" + boundary
+	urlencoded = "application/x-www-form-urlencoded"
 )
 
 type Test struct {
@@ -48,7 +58,7 @@ type Request struct {
 }
 
 func (r Request) Execute(method, path string) error {
-	req, err := http.NewRequest(method, "http://localhost:3456"+path, r.Body.Reader())
+	req, err := http.NewRequest(method, "http://"+Addr+path, r.Body.Reader())
 	if err != nil {
 		panic(err)
 	}
@@ -61,7 +71,7 @@ func (r Request) Execute(method, path string) error {
 	}
 	if err = r.Want.Compare(res); err != nil {
 		msg := fmt.Sprintf(" %s%s %s%s Header: %s%v%s",
-			redColor,
+			carnationColor,
 			method,
 			path,
 			stopColor,
@@ -70,7 +80,7 @@ func (r Request) Execute(method, path string) error {
 			stopColor,
 		)
 		if r.Body != nil {
-			msg += fmt.Sprintf(" Body: %s%v%s", redColor, r.Body, stopColor)
+			msg += fmt.Sprintf(" Body: %s%v%s", carnationColor, r.Body, stopColor)
 		}
 		return errors.New(fmt.Sprintf("%s\n%s", msg, err.Error()))
 	}
@@ -85,9 +95,12 @@ type Response struct {
 
 func (r Response) Compare(res *http.Response) error {
 	var msg string
+	// compare response status
 	if res.StatusCode != r.Status {
 		msg = fmt.Sprintf("StatusCode got = %d, want %d", res.StatusCode, r.Status)
 	}
+
+	// compare response header
 	for k, v := range r.Header {
 		val := res.Header.Get(k)
 		if val != v[0] {
@@ -97,6 +110,29 @@ func (r Response) Compare(res *http.Response) error {
 			msg += fmt.Sprintf("%s got = %q, want = %q", k, val, v[0])
 		}
 	}
+
+	// compare response body
+	if len(r.Body) > 0 {
+		var (
+			got  = make(map[string]interface{})
+			want = make(map[string]interface{})
+		)
+
+		b, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			panic(err)
+		}
+		if err = json.Unmarshal(b, &got); err != nil {
+			panic(err)
+		}
+		if err = json.Unmarshal([]byte(r.Body), &want); err != nil {
+			panic(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			msg += fmt.Sprintf("Body got %v, want %v", got, want)
+		}
+	}
+
 	if msg != "" {
 		return errors.New(msg)
 	}
@@ -112,12 +148,6 @@ func (h Header) SetTo(r *http.Request) {
 		}
 	}
 }
-
-var (
-	boundary   = "testboundary"
-	multi      = "multipart/form-data; boundary=" + boundary
-	urlencoded = "application/x-www-form-urlencoded"
-)
 
 type Form map[string]interface{}
 
