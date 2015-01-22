@@ -41,10 +41,10 @@ type Hit struct {
 	Requests Methods
 }
 
-func (tst Hit) Test(t *testing.T) {
-	for m, rr := range tst.Requests {
+func (h Hit) Test(t *testing.T) {
+	for m, rr := range h.Requests {
 		for _, r := range rr {
-			err := r.Execute(m, tst.Path)
+			err := r.Execute(m, h.Path)
 			if err != nil {
 				t.Error(err)
 			}
