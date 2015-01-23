@@ -74,7 +74,7 @@ func (r Request) Execute(method, path string) error {
 	}
 	if err = r.Want.Compare(res); err != nil {
 		msg := fmt.Sprintf(" %s%s %s%s Header: %s%v%s",
-			redColor,
+			yellowColor,
 			method,
 			path,
 			stopColor,
@@ -83,7 +83,7 @@ func (r Request) Execute(method, path string) error {
 			stopColor,
 		)
 		if r.Body != nil {
-			msg += fmt.Sprintf(" Body: %s%v%s", redColor, r.Body, stopColor)
+			msg += fmt.Sprintf(" Body: %s%v%s", yellowColor, r.Body, stopColor)
 		}
 		return errors.New(fmt.Sprintf("%s\n%s", msg, err.Error()))
 	}
@@ -100,17 +100,29 @@ func (r Response) Compare(res *http.Response) error {
 	var msg string
 	// compare status
 	if res.StatusCode != r.Status {
-		msg = fmt.Sprintf("StatusCode got = %d, want %d", res.StatusCode, r.Status)
+		msg = fmt.Sprintf("StatusCode got = %s%d%s, want %s%d%s\n",
+			redColor,
+			res.StatusCode,
+			stopColor,
+			redColor,
+			r.Status,
+			stopColor,
+		)
 	}
 
 	// compare header
 	for k, v := range r.Header {
 		val := res.Header.Get(k)
 		if val != v[0] {
-			if msg != "" {
-				msg += ";\n"
-			}
-			msg += fmt.Sprintf("%s got = %q, want = %q", k, val, v[0])
+			msg += fmt.Sprintf("Header[%q] got = %s%q%s, want = %s%q%s\n",
+				k,
+				redColor,
+				val,
+				stopColor,
+				redColor,
+				v[0],
+				stopColor,
+			)
 		}
 	}
 
@@ -130,11 +142,11 @@ func (r Response) Compare(res *http.Response) error {
 			panic(err)
 		}
 		if !reflect.DeepEqual(got, want) {
-			msg += fmt.Sprintf("Body got %s%v%s, want %s%v%s",
-				yellowColor,
+			msg += fmt.Sprintf("Body got %s%v%s, want %s%v%s\n",
+				redColor,
 				got,
 				stopColor,
-				yellowColor,
+				redColor,
 				want,
 				stopColor,
 			)
