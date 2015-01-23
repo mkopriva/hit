@@ -9,13 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"mime/multipart"
+	"log"
 	"net/http"
-	"net/url"
-	"os"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -56,21 +52,39 @@ type Methods map[string][]Request
 
 type Request struct {
 	Header Header
-	Body   Form
+	Bodyer Bodyer
 	Want   Response
 }
 
 func (r Request) Execute(method, path string) error {
-	req, err := http.NewRequest(method, "http://"+Addr+path, r.Body.Reader())
+	var (
+		body io.Reader
+		err  error
+	)
+	if r.Bodyer != nil {
+		body, err = r.Bodyer.Body()
+		if err != nil {
+			log.Fatalf("hit: %T.Body() failed. %v", r.Bodyer, err)
+		}
+	}
+
+	// prepare request
+	urlStr := "http://" + Addr + path
+	req, err := http.NewRequest(method, urlStr, body)
 	if err != nil {
-		panic(err)
+		log.Fatalf("hit: failed http.NewRequest(%q, %q, %v). %v", method, urlStr, body, err)
+	}
+	if r.Bodyer != nil {
+		req.Header.Set("Content-Type", r.Bodyer.Type())
 	}
 	if r.Header != nil {
 		r.Header.SetTo(req)
 	}
+
+	// execute request
 	res, err := client.Do(req)
 	if err != nil && !isRedirectError(err) {
-		panic(err)
+		log.Fatalf("hit: failed executing http.Client.Do with %+v. %v", req, err)
 	}
 	if err = r.Want.Compare(res); err != nil {
 		msg := fmt.Sprintf(" %s%s %s%s Header: %s%v%s",
@@ -82,8 +96,8 @@ func (r Request) Execute(method, path string) error {
 			r.Header,
 			stopColor,
 		)
-		if r.Body != nil {
-			msg += fmt.Sprintf(" Body: %s%v%s", yellowColor, r.Body, stopColor)
+		if r.Bodyer != nil {
+			msg += fmt.Sprintf(" Body: %s%v%s", yellowColor, r.Bodyer, stopColor)
 		}
 		return errors.New(fmt.Sprintf("%s\n%s", msg, err.Error()))
 	}
@@ -97,6 +111,7 @@ type Response struct {
 }
 
 func (r Response) Compare(res *http.Response) error {
+	defer res.Body.Close()
 	var msg string
 	// compare status
 	if res.StatusCode != r.Status {
@@ -133,13 +148,15 @@ func (r Response) Compare(res *http.Response) error {
 			want = make(map[string]interface{})
 		)
 
-		dec := json.NewDecoder(res.Body)
-		if err := dec.Decode(&got); err != nil {
-			panic(err)
+		d := json.NewDecoder(res.Body)
+		d.UseNumber()
+		if err := d.Decode(&got); err != nil && err != io.EOF {
+			log.Fatalf("hit: error decoding http.Response.Body. %v", err)
 		}
-		dec = json.NewDecoder(strings.NewReader(r.Body))
-		if err := dec.Decode(&want); err != nil {
-			panic(err)
+		d = json.NewDecoder(strings.NewReader(r.Body))
+		d.UseNumber()
+		if err := d.Decode(&want); err != nil && err != io.EOF {
+			log.Fatalf("hit: error decoding hit.Response.Body. %v", err)
 		}
 		if !reflect.DeepEqual(got, want) {
 			msg += fmt.Sprintf("Body got %s%v%s, want %s%v%s\n",
@@ -169,90 +186,109 @@ func (h Header) SetTo(r *http.Request) {
 	}
 }
 
-type Form map[string]interface{}
-
-func (f Form) Type() string {
-	for _, v := range f {
-		if _, ok := v.(string); !ok {
-			return multi
-		}
-	}
-	return urlencoded
+type Bodyer interface {
+	Type() string
+	Body() (io.Reader, error)
 }
 
-func (f Form) Reader() io.Reader {
-	t := f.Type()
-	if t == multi {
-		return f.multipartBody()
-	} else if t == urlencoded {
-		return f.urlencodedBody()
-	}
-	return nil
+type JSON map[string]interface{}
+
+func (j JSON) Type() string {
+	return "application/json"
 }
 
-func (f Form) multipartBody() io.Reader {
-	buf := new(bytes.Buffer)
-	w := multipart.NewWriter(buf)
-	if err := w.SetBoundary(boundary); err != nil {
-		panic(err)
+func (j JSON) Body() (io.Reader, error) {
+	b, err := json.Marshal(j)
+	if err != nil {
+		return nil, err
 	}
-	for k, v := range f {
-		if s, ok := v.(string); ok {
-			err := w.WriteField(k, s)
-			if err != nil {
-				panic(err)
-			}
-		} else if file, ok := v.(*os.File); ok {
-			part, err := w.CreateFormFile(k, file.Name())
-			if err != nil {
-				panic(err)
-			}
-			_, err = io.Copy(part, file)
-			if err != nil {
-				panic(err)
-			}
-		} else {
-			panic("hit: use only a string or a *os.File with Form.")
-		}
-	}
-	if err := w.Close(); err != nil {
-		panic(err)
-	}
-	return ioutil.NopCloser(buf)
-	return nil
+	return bytes.NewReader(b), nil
 }
 
-func (f Form) urlencodedBody() io.Reader {
-	if f == nil || len(f) == 0 {
-		return nil
-	}
-	keys := make([]string, len(f))
-	j := 0
-	for k := range f {
-		keys[j] = k
-		j++
-	}
-	sort.Strings(keys)
-	buf := new(bytes.Buffer)
-	for _, k := range keys {
-		if buf.Len() > 0 {
-			buf.WriteByte('&')
-		}
-		v := url.QueryEscape(f[k].(string))
-		k = url.QueryEscape(k)
-		buf.WriteString(k + "=" + v)
-	}
-	return ioutil.NopCloser(buf)
+// type Form map[string]interface{}
+//
+// func (f Form) Type() string {
+// 	for _, v := range f {
+// 		if _, ok := v.(string); !ok {
+// 			return multi
+// 		}
+// 	}
+// 	return urlencoded
+// }
+//
+// func (f Form) Reader() io.Reader {
+// 	t := f.Type()
+// 	if t == multi {
+// 		return f.multipartBody()
+// 	} else if t == urlencoded {
+// 		return f.urlencodedBody()
+// 	}
+// 	return nil
+// }
+//
+// func (f Form) multipartBody() io.Reader {
+// 	buf := new(bytes.Buffer)
+// 	w := multipart.NewWriter(buf)
+// 	if err := w.SetBoundary(boundary); err != nil {
+// 		panic(err)
+// 	}
+// 	for k, v := range f {
+// 		if s, ok := v.(string); ok {
+// 			err := w.WriteField(k, s)
+// 			if err != nil {
+// 				panic(err)
+// 			}
+// 		} else if file, ok := v.(*os.File); ok {
+// 			part, err := w.CreateFormFile(k, file.Name())
+// 			if err != nil {
+// 				panic(err)
+// 			}
+// 			_, err = io.Copy(part, file)
+// 			if err != nil {
+// 				panic(err)
+// 			}
+// 		} else {
+// 			panic("hit: use only a string or a *os.File with Form.")
+// 		}
+// 	}
+// 	if err := w.Close(); err != nil {
+// 		panic(err)
+// 	}
+// 	return ioutil.NopCloser(buf)
+// 	return nil
+// }
+//
+// func (f Form) urlencodedBody() io.Reader {
+// 	if f == nil || len(f) == 0 {
+// 		return nil
+// 	}
+// 	keys := make([]string, len(f))
+// 	j := 0
+// 	for k := range f {
+// 		keys[j] = k
+// 		j++
+// 	}
+// 	sort.Strings(keys)
+// 	buf := new(bytes.Buffer)
+// 	for _, k := range keys {
+// 		if buf.Len() > 0 {
+// 			buf.WriteByte('&')
+// 		}
+// 		v := url.QueryEscape(f[k].(string))
+// 		k = url.QueryEscape(k)
+// 		buf.WriteString(k + "=" + v)
+// 	}
+// 	return ioutil.NopCloser(buf)
+// }
+
+var client = &http.Client{
+	CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		return errRedirect
+	},
 }
 
 var errRedirect = errors.New("just a redirect")
 
 func isRedirectError(err error) bool {
 	return strings.Contains(err.Error(), errRedirect.Error())
-}
-
-var client = &http.Client{
-	CheckRedirect: func(r *http.Request, via []*http.Request) error {
-		return errRedirect
-	},
 }
