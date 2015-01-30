@@ -57,15 +57,9 @@ type Request struct {
 }
 
 func (r Request) Execute(method, path string) error {
-	var (
-		body io.Reader
-		err  error
-	)
+	var body io.Reader
 	if r.Bodyer != nil {
-		body, err = r.Bodyer.Body()
-		if err != nil {
-			log.Fatalf("hit: %T.Body() failed. %v", r.Bodyer, err)
-		}
+		body = r.Bodyer.Body()
 	}
 
 	// prepare request
@@ -107,27 +101,62 @@ func (r Request) Execute(method, path string) error {
 type Response struct {
 	Status int
 	Header Header
-	Body   string
+	Bodyer Bodyer
 }
 
 func (r Response) Compare(res *http.Response) error {
 	defer res.Body.Close()
 	var msg string
-	// compare status
-	if res.StatusCode != r.Status {
-		msg = fmt.Sprintf("StatusCode got = %s%d%s, want %s%d%s\n",
+
+	if err := r.CompareStatus(res.StatusCode); err != nil {
+		msg += err.Error()
+	}
+	if r.Header != nil {
+		if err := r.Header.Compare(res.Header); err != nil {
+			msg += err.Error()
+		}
+	}
+	if r.Bodyer != nil {
+		if err := r.Bodyer.Compare(res.Body); err != nil {
+			msg += err.Error()
+		}
+	}
+
+	if msg != "" {
+		return errors.New(msg)
+	}
+	return nil
+}
+
+func (r Response) CompareStatus(status int) error {
+	if status != r.Status {
+		return fmt.Errorf("StatusCode got = %s%d%s, want %s%d%s\n",
 			redColor,
-			res.StatusCode,
+			status,
 			stopColor,
 			redColor,
 			r.Status,
 			stopColor,
 		)
 	}
+	return nil
+}
 
-	// compare header
-	for k, v := range r.Header {
-		val := res.Header.Get(k)
+// Header
+type Header http.Header
+
+func (h Header) SetTo(r *http.Request) {
+	for k, vv := range h {
+		for _, v := range vv {
+			r.Header.Set(k, v)
+		}
+	}
+}
+
+func (h Header) Compare(hh http.Header) error {
+	var msg string
+	for k, v := range h {
+		val := hh.Get(k)
 		if val != v[0] {
 			msg += fmt.Sprintf("Header[%q] got = %s%q%s, want = %s%q%s\n",
 				k,
@@ -140,69 +169,73 @@ func (r Response) Compare(res *http.Response) error {
 			)
 		}
 	}
-
-	// compare body
-	if len(r.Body) > 0 {
-		var (
-			got  = make(map[string]interface{})
-			want = make(map[string]interface{})
-		)
-
-		d := json.NewDecoder(res.Body)
-		d.UseNumber()
-		if err := d.Decode(&got); err != nil && err != io.EOF {
-			log.Fatalf("hit: error decoding http.Response.Body. %v", err)
-		}
-		d = json.NewDecoder(strings.NewReader(r.Body))
-		d.UseNumber()
-		if err := d.Decode(&want); err != nil && err != io.EOF {
-			log.Fatalf("hit: error decoding hit.Response.Body. %v", err)
-		}
-		if !reflect.DeepEqual(got, want) {
-			msg += fmt.Sprintf("Body got %s%v%s, want %s%v%s\n",
-				redColor,
-				got,
-				stopColor,
-				redColor,
-				want,
-				stopColor,
-			)
-		}
-	}
-
 	if msg != "" {
-		return errors.New(msg)
+		return fmt.Errorf(msg)
 	}
 	return nil
 }
 
-type Header map[string][]string
-
-func (h Header) SetTo(r *http.Request) {
-	for k, vv := range h {
-		for _, v := range vv {
-			r.Header.Set(k, v)
-		}
-	}
-}
-
+// Bodyer
 type Bodyer interface {
 	Type() string
-	Body() (io.Reader, error)
+	Body() io.Reader
+	Compare(r io.Reader) error
 }
 
-type JSON map[string]interface{}
+// JSONObject
+type JSONObject map[string]interface{}
 
-func (j JSON) Type() string {
-	return "application/json"
+func (j JSONObject) Type() string { return "application/json" }
+
+func (j JSONObject) Body() io.Reader { return mustMarshal(j) }
+
+func (j JSONObject) Compare(r io.Reader) error {
+	return mustCompare(r, j.Body(), map[string]interface{}{}, map[string]interface{}{})
 }
 
-func (j JSON) Body() (io.Reader, error) {
-	b, err := json.Marshal(j)
+// JSONArray
+type JSONArray []JSONObject
+
+func (j JSONArray) Type() string { return "application/json" }
+
+func (j JSONArray) Body() io.Reader { return mustMarshal(j) }
+
+func (j JSONArray) Compare(r io.Reader) error {
+	return mustCompare(r, j.Body(), []interface{}{}, []interface{}{})
+}
+
+// mustMarshal
+func mustMarshal(v interface{}) io.Reader {
+	b, err := json.Marshal(v)
 	if err != nil {
-		return nil, err
+		panic(fmt.Sprintf("hit: %T.Body() (%+v) failed. %v", v, v, err))
 	}
-	return bytes.NewReader(b), nil
+	return bytes.NewReader(b)
+}
+
+// mustCompare
+func mustCompare(gotr, wantr io.Reader, got, want interface{}) error {
+	d := json.NewDecoder(gotr)
+	d.UseNumber()
+	if err := d.Decode(&got); err != nil && err != io.EOF {
+		panic(fmt.Sprintf("hit: error decoding http.Response.Body into %#v. %v", got, err))
+	}
+	d = json.NewDecoder(wantr)
+	d.UseNumber()
+	if err := d.Decode(&want); err != nil && err != io.EOF {
+		panic(fmt.Sprintf("hit: error decoding hit.Response.Bodyer into %#v. %v", want, err))
+	}
+	if !reflect.DeepEqual(got, want) {
+		return fmt.Errorf("Body got %s%#v%s, want %s%#v%s\n",
+			redColor,
+			got,
+			stopColor,
+			redColor,
+			want,
+			stopColor,
+		)
+	}
+	return nil
 }
 
 // type Form map[string]interface{}
