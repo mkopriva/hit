@@ -56,18 +56,20 @@ func (h Hit) Test(t *testing.T) {
 // MethodRequests maps HTTP methods to a slice of Requests.
 type MethodRequests map[string][]Request
 
-// Request
+// The type Request represents an HTTP request with its expected response.
 type Request struct {
 	Header Header
-	Bodyer Bodyer
+	Body   Bodyer
 	Want   Response
 }
 
+// Execute prepares and executes an HTTP request with the specified method to
+// the speciefied path.
 func (r Request) Execute(method, path string) error {
 	var body io.Reader
 	var err error
-	if r.Bodyer != nil {
-		body, err = r.Bodyer.Body()
+	if r.Body != nil {
+		body, err = r.Body.Body()
 		if err != nil {
 			return err
 		}
@@ -79,8 +81,8 @@ func (r Request) Execute(method, path string) error {
 	if err != nil {
 		log.Fatalf("hit: failed http.NewRequest(%q, %q, %v). %v", method, urlStr, body, err)
 	}
-	if r.Bodyer != nil {
-		req.Header.Set("Content-Type", r.Bodyer.Type())
+	if r.Body != nil {
+		req.Header.Set("Content-Type", r.Body.Type())
 	}
 	if r.Header != nil {
 		r.Header.SetTo(req)
@@ -101,20 +103,22 @@ func (r Request) Execute(method, path string) error {
 			r.Header,
 			StopColor,
 		)
-		if r.Bodyer != nil {
-			msg += fmt.Sprintf(" Body: %s%v%s", YellowColor, r.Bodyer, StopColor)
+		if r.Body != nil {
+			msg += fmt.Sprintf(" Body: %s%v%s", YellowColor, r.Body, StopColor)
 		}
 		return errors.New(fmt.Sprintf("%s\n%s", msg, err.Error()))
 	}
 	return nil
 }
 
+// Response represent an HTTP response.
 type Response struct {
 	Status int
 	Header Header
 	Body   JSONBody
 }
 
+// Compare compares the specified http.Repsonse to the receiver.
 func (r Response) Compare(res *http.Response) error {
 	defer res.Body.Close()
 	var msg string
@@ -139,6 +143,8 @@ func (r Response) Compare(res *http.Response) error {
 	return nil
 }
 
+// CompareStatus checks if the specified status is equal to the receiver's Status.
+// If they are not equal a formatted error is returned.
 func (r Response) CompareStatus(status int) error {
 	if status != r.Status {
 		return fmt.Errorf("StatusCode got = %s%d%s, want %s%d%s\n",
@@ -153,9 +159,10 @@ func (r Response) CompareStatus(status int) error {
 	return nil
 }
 
-// Header
+// Header represents an HTTP Header.
 type Header http.Header
 
+// SetTo sets all of the receiver's values to the specified http.Request's header.
 func (h Header) SetTo(r *http.Request) {
 	for k, vv := range h {
 		for _, v := range vv {
@@ -164,6 +171,9 @@ func (h Header) SetTo(r *http.Request) {
 	}
 }
 
+// TODO:(mkopriva) check all values of a field not just the first one.
+// Compare checks if all of the receiver's key-value pairs are present in the
+// specified http.Header returning an error if not.
 func (h Header) Compare(hh http.Header) error {
 	var msg string
 	for k, v := range h {
@@ -186,7 +196,7 @@ func (h Header) Compare(hh http.Header) error {
 	return nil
 }
 
-var (
+const (
 	boundary   = "testboundary"
 	multi      = "multipart/form-data; boundary=" + boundary
 	urlencoded = "application/x-www-form-urlencoded"
@@ -199,10 +209,14 @@ type Bodyer interface {
 	Body() (io.Reader, error)
 }
 
+// JSONBody represents an http request body whose content is of type application/json.
 type JSONBody map[string]interface{}
 
+// Type returns JSONBody's media type.
 func (b JSONBody) Type() string { return appjson }
 
+// Body implements the Bodyer interface by marshaling the receiver's contents
+// into a JSON string and returning it as an io.Reader.
 func (b JSONBody) Body() (io.Reader, error) {
 	m, err := json.Marshal(b)
 	if err != nil {
@@ -211,6 +225,7 @@ func (b JSONBody) Body() (io.Reader, error) {
 	return bytes.NewReader(m), nil
 }
 
+// Compare compares the receiver's contents to the contents of the specified reader.
 func (b JSONBody) Compare(r io.Reader) error {
 	got, want := make(map[string]interface{}), make(map[string]interface{})
 
@@ -244,24 +259,35 @@ func (b JSONBody) Compare(r io.Reader) error {
 	return nil
 }
 
-type FormBody url.Values
+// FormBody represents an http request body whose content is of type application/x-www-form-urlencoded.
+type FormBody map[string][]string
 
+// Type returns the FormBody's media type.
 func (FormBody) Type() string { return urlencoded }
 
+// Body implements the Bodyer interface by serializing the receiver's contents
+// into a url encoded string and returning it as an io.Reader.
 func (b FormBody) Body() (io.Reader, error) {
 	return strings.NewReader(url.Values(b).Encode()), nil
 }
 
+// The type File should be used in combination with the type MultipartBody to
+// represent a file being uploaded in an http request.
 type File struct {
 	Type     string
 	Name     string
 	Contents string
 }
 
+// MultipartBody represents an http request body whose content is of type multipart/form-data.
+// The MultipartBody can handle values only of type string or hit's File.
 type MultipartBody map[string][]interface{}
 
+// Type returns the MultipartBody's media type.
 func (MultipartBody) Type() string { return multi }
 
+// Body implements the Bodyer interface by serializing the receiver's contents
+// into a mutlipart data stream and returning it as an io.Reader.
 func (b MultipartBody) Body() (io.Reader, error) {
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
@@ -298,6 +324,7 @@ func (b MultipartBody) Body() (io.Reader, error) {
 	return ioutil.NopCloser(buf), nil
 }
 
+// client is an http.Client that does not follow redirects.
 var client = &http.Client{
 	CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		return errRedirect
@@ -306,10 +333,13 @@ var client = &http.Client{
 
 var errRedirect = errors.New("just a redirect")
 
+// The isRedirectError function returns true if the given error contains the
+// message from errRedirect, false otherwise.
 func isRedirectError(err error) bool {
 	return strings.Contains(err.Error(), errRedirect.Error())
 }
 
+// copied from go's src/mime/multipart/writer.go
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 
 func escapeQuotes(s string) string {
