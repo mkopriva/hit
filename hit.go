@@ -9,34 +9,39 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-const (
+var (
+	// Addr is the TCP network address used to construct requests. The user
+	// is free to set it to any other address value they want to test.
 	Addr = "localhost:3456"
 )
 
-var (
-	redColor    = "\033[91m"
-	yellowColor = "\033[93m"
-	purpleColor = "\033[95m"
-	cyanColor   = "\033[96m"
-	stopColor   = "\033[0m"
-
-	boundary   = "testboundary"
-	multi      = "multipart/form-data; boundary=" + boundary
-	urlencoded = "application/x-www-form-urlencoded"
+const (
+	// ANSI color values used to colorize terminal output for better readability.
+	RedColor    = "\033[91m"
+	YellowColor = "\033[93m"
+	PurpleColor = "\033[95m"
+	CyanColor   = "\033[96m"
+	StopColor   = "\033[0m"
 )
 
+// Hit represents a bunch of test cases against a specific endpoint.
 type Hit struct {
 	Path     string
-	Requests Methods
+	Requests MethodRequests
 }
 
+// Test executes all of the Hit's test Requests calling t.Error if any of them fail.
 func (h Hit) Test(t *testing.T) {
 	for m, rr := range h.Requests {
 		for _, r := range rr {
@@ -48,8 +53,10 @@ func (h Hit) Test(t *testing.T) {
 	}
 }
 
-type Methods map[string][]Request
+// MethodRequests maps HTTP methods to a slice of Requests.
+type MethodRequests map[string][]Request
 
+// Request
 type Request struct {
 	Header Header
 	Bodyer Bodyer
@@ -58,8 +65,12 @@ type Request struct {
 
 func (r Request) Execute(method, path string) error {
 	var body io.Reader
+	var err error
 	if r.Bodyer != nil {
-		body = r.Bodyer.Body()
+		body, err = r.Bodyer.Body()
+		if err != nil {
+			return err
+		}
 	}
 
 	// prepare request
@@ -82,16 +93,16 @@ func (r Request) Execute(method, path string) error {
 	}
 	if err = r.Want.Compare(res); err != nil {
 		msg := fmt.Sprintf(" %s%s %s%s Header: %s%v%s",
-			yellowColor,
+			YellowColor,
 			method,
 			path,
-			stopColor,
-			yellowColor,
+			StopColor,
+			YellowColor,
 			r.Header,
-			stopColor,
+			StopColor,
 		)
 		if r.Bodyer != nil {
-			msg += fmt.Sprintf(" Body: %s%v%s", yellowColor, r.Bodyer, stopColor)
+			msg += fmt.Sprintf(" Body: %s%v%s", YellowColor, r.Bodyer, StopColor)
 		}
 		return errors.New(fmt.Sprintf("%s\n%s", msg, err.Error()))
 	}
@@ -101,7 +112,7 @@ func (r Request) Execute(method, path string) error {
 type Response struct {
 	Status int
 	Header Header
-	Bodyer Bodyer
+	Body   JSONBody
 }
 
 func (r Response) Compare(res *http.Response) error {
@@ -116,8 +127,8 @@ func (r Response) Compare(res *http.Response) error {
 			msg += err.Error()
 		}
 	}
-	if r.Bodyer != nil {
-		if err := r.Bodyer.Compare(res.Body); err != nil {
+	if r.Body != nil {
+		if err := r.Body.Compare(res.Body); err != nil {
 			msg += err.Error()
 		}
 	}
@@ -131,12 +142,12 @@ func (r Response) Compare(res *http.Response) error {
 func (r Response) CompareStatus(status int) error {
 	if status != r.Status {
 		return fmt.Errorf("StatusCode got = %s%d%s, want %s%d%s\n",
-			redColor,
+			RedColor,
 			status,
-			stopColor,
-			redColor,
+			StopColor,
+			RedColor,
 			r.Status,
-			stopColor,
+			StopColor,
 		)
 	}
 	return nil
@@ -160,12 +171,12 @@ func (h Header) Compare(hh http.Header) error {
 		if val != v[0] {
 			msg += fmt.Sprintf("Header[%q] got = %s%q%s, want = %s%q%s\n",
 				k,
-				redColor,
+				RedColor,
 				val,
-				stopColor,
-				redColor,
+				StopColor,
+				RedColor,
 				v[0],
-				stopColor,
+				StopColor,
 			)
 		}
 	}
@@ -175,144 +186,117 @@ func (h Header) Compare(hh http.Header) error {
 	return nil
 }
 
+var (
+	boundary   = "testboundary"
+	multi      = "multipart/form-data; boundary=" + boundary
+	urlencoded = "application/x-www-form-urlencoded"
+	appjson    = "application/json"
+)
+
 // Bodyer
 type Bodyer interface {
 	Type() string
-	Body() io.Reader
-	Compare(r io.Reader) error
+	Body() (io.Reader, error)
 }
 
-// JSONObject
-type JSONObject map[string]interface{}
+type JSONBody map[string]interface{}
 
-func (j JSONObject) Type() string { return "application/json" }
+func (b JSONBody) Type() string { return appjson }
 
-func (j JSONObject) Body() io.Reader { return mustMarshal(j) }
-
-func (j JSONObject) Compare(r io.Reader) error {
-	return mustCompare(r, j.Body(), map[string]interface{}{}, map[string]interface{}{})
-}
-
-// JSONArray
-type JSONArray []JSONObject
-
-func (j JSONArray) Type() string { return "application/json" }
-
-func (j JSONArray) Body() io.Reader { return mustMarshal(j) }
-
-func (j JSONArray) Compare(r io.Reader) error {
-	return mustCompare(r, j.Body(), []interface{}{}, []interface{}{})
-}
-
-// mustMarshal
-func mustMarshal(v interface{}) io.Reader {
-	b, err := json.Marshal(v)
+func (b JSONBody) Body() (io.Reader, error) {
+	m, err := json.Marshal(b)
 	if err != nil {
-		panic(fmt.Sprintf("hit: %T.Body() (%+v) failed. %v", v, v, err))
+		return nil, fmt.Errorf("hit: %T.Body() (%+v) failed. %v", b, b, err)
 	}
-	return bytes.NewReader(b)
+	return bytes.NewReader(m), nil
 }
 
-// mustCompare
-func mustCompare(gotr, wantr io.Reader, got, want interface{}) error {
-	d := json.NewDecoder(gotr)
+func (b JSONBody) Compare(r io.Reader) error {
+	got, want := make(map[string]interface{}), make(map[string]interface{})
+
+	d := json.NewDecoder(r)
 	d.UseNumber()
 	if err := d.Decode(&got); err != nil && err != io.EOF {
-		panic(fmt.Sprintf("hit: error decoding http.Response.Body into %#v. %v", got, err))
+		return fmt.Errorf("hit: error decoding http.Response.Body into %#v. %v", got, err)
 	}
-	d = json.NewDecoder(wantr)
+
+	r2, err := b.Body()
+	if err != nil {
+		return fmt.Errorf("hit: Bodyer %+v, error %v", b, err)
+	}
+
+	d = json.NewDecoder(r2)
 	d.UseNumber()
 	if err := d.Decode(&want); err != nil && err != io.EOF {
-		panic(fmt.Sprintf("hit: error decoding hit.Response.Bodyer into %#v. %v", want, err))
+		return fmt.Errorf("hit: error decoding hit.Response.Bodyer into %#v. %v", want, err)
 	}
+
 	if !reflect.DeepEqual(got, want) {
 		return fmt.Errorf("Body got %s%#v%s, want %s%#v%s\n",
-			redColor,
+			RedColor,
 			got,
-			stopColor,
-			redColor,
+			StopColor,
+			RedColor,
 			want,
-			stopColor,
+			StopColor,
 		)
 	}
 	return nil
 }
 
-// type Form map[string]interface{}
-//
-// func (f Form) Type() string {
-// 	for _, v := range f {
-// 		if _, ok := v.(string); !ok {
-// 			return multi
-// 		}
-// 	}
-// 	return urlencoded
-// }
-//
-// func (f Form) Reader() io.Reader {
-// 	t := f.Type()
-// 	if t == multi {
-// 		return f.multipartBody()
-// 	} else if t == urlencoded {
-// 		return f.urlencodedBody()
-// 	}
-// 	return nil
-// }
-//
-// func (f Form) multipartBody() io.Reader {
-// 	buf := new(bytes.Buffer)
-// 	w := multipart.NewWriter(buf)
-// 	if err := w.SetBoundary(boundary); err != nil {
-// 		panic(err)
-// 	}
-// 	for k, v := range f {
-// 		if s, ok := v.(string); ok {
-// 			err := w.WriteField(k, s)
-// 			if err != nil {
-// 				panic(err)
-// 			}
-// 		} else if file, ok := v.(*os.File); ok {
-// 			part, err := w.CreateFormFile(k, file.Name())
-// 			if err != nil {
-// 				panic(err)
-// 			}
-// 			_, err = io.Copy(part, file)
-// 			if err != nil {
-// 				panic(err)
-// 			}
-// 		} else {
-// 			panic("hit: use only a string or a *os.File with Form.")
-// 		}
-// 	}
-// 	if err := w.Close(); err != nil {
-// 		panic(err)
-// 	}
-// 	return ioutil.NopCloser(buf)
-// 	return nil
-// }
-//
-// func (f Form) urlencodedBody() io.Reader {
-// 	if f == nil || len(f) == 0 {
-// 		return nil
-// 	}
-// 	keys := make([]string, len(f))
-// 	j := 0
-// 	for k := range f {
-// 		keys[j] = k
-// 		j++
-// 	}
-// 	sort.Strings(keys)
-// 	buf := new(bytes.Buffer)
-// 	for _, k := range keys {
-// 		if buf.Len() > 0 {
-// 			buf.WriteByte('&')
-// 		}
-// 		v := url.QueryEscape(f[k].(string))
-// 		k = url.QueryEscape(k)
-// 		buf.WriteString(k + "=" + v)
-// 	}
-// 	return ioutil.NopCloser(buf)
-// }
+type FormBody url.Values
+
+func (FormBody) Type() string { return urlencoded }
+
+func (b FormBody) Body() (io.Reader, error) {
+	return strings.NewReader(url.Values(b).Encode()), nil
+}
+
+type File struct {
+	Type     string
+	Name     string
+	Contents string
+}
+
+type MultipartBody map[string][]interface{}
+
+func (MultipartBody) Type() string { return multi }
+
+func (b MultipartBody) Body() (io.Reader, error) {
+	buf := new(bytes.Buffer)
+	w := multipart.NewWriter(buf)
+	if err := w.SetBoundary(boundary); err != nil {
+		panic(err)
+	}
+	for k, vv := range b {
+		for _, v := range vv {
+			if s, ok := v.(string); ok {
+				err := w.WriteField(k, s)
+				if err != nil {
+					return nil, fmt.Errorf("hit: %T.Body() (%+v) failed. %v", b, b, err)
+				}
+			} else if file, ok := v.(File); ok {
+				part, err := w.CreatePart(textproto.MIMEHeader{
+					"Content-Disposition": {fmt.Sprintf(`form-data; name="%s"; filename="%s"`, escapeQuotes(k), escapeQuotes(file.Name))},
+					"Content-Type":        {file.Type},
+				})
+				if err != nil {
+					return nil, fmt.Errorf("hit: %T.Body() (%+v) failed. %v", b, b, err)
+				}
+				_, err = io.Copy(part, strings.NewReader(file.Contents))
+				if err != nil {
+					return nil, fmt.Errorf("hit: %T.Body() (%+v) failed. %v", b, b, err)
+				}
+			} else {
+				return nil, fmt.Errorf("hit: %q containts unsupported type %T. Please use only strings or hit.Files inside MultipartBody.", k, v)
+			}
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("hit: %T.Body() (%+v) failed. %v", b, b, err)
+	}
+	return ioutil.NopCloser(buf), nil
+}
 
 var client = &http.Client{
 	CheckRedirect: func(r *http.Request, via []*http.Request) error {
@@ -324,4 +308,10 @@ var errRedirect = errors.New("just a redirect")
 
 func isRedirectError(err error) bool {
 	return strings.Contains(err.Error(), errRedirect.Error())
+}
+
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+func escapeQuotes(s string) string {
+	return quoteEscaper.Replace(s)
 }
