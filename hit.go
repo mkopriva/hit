@@ -85,7 +85,7 @@ func (r Request) Execute(method, path string) error {
 		req.Header.Set("Content-Type", r.Body.Type())
 	}
 	if r.Header != nil {
-		r.Header.SetTo(req)
+		r.Header.AddTo(req)
 	}
 
 	// execute request
@@ -120,7 +120,9 @@ type Response struct {
 
 // Compare compares the specified http.Repsonse to the receiver.
 func (r Response) Compare(res *http.Response) error {
-	defer res.Body.Close()
+	if res.Body != nil {
+		defer res.Body.Close()
+	}
 	var msg string
 
 	if err := r.CompareStatus(res.StatusCode); err != nil {
@@ -162,11 +164,11 @@ func (r Response) CompareStatus(status int) error {
 // Header represents an HTTP Header.
 type Header http.Header
 
-// SetTo sets all of the receiver's values to the specified http.Request's header.
-func (h Header) SetTo(r *http.Request) {
+// AddTo sets all of the receiver's values to the specified http.Request's header.
+func (h Header) AddTo(r *http.Request) {
 	for k, vv := range h {
 		for _, v := range vv {
-			r.Header.Set(k, v)
+			r.Header.Add(k, v)
 		}
 	}
 }
@@ -339,7 +341,7 @@ func isRedirectError(err error) bool {
 	return strings.Contains(err.Error(), errRedirect.Error())
 }
 
-// copied from go's src/mime/multipart/writer.go
+// copied from go's src/mime/multipart/writer.go @439b329363
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 
 func escapeQuotes(s string) string {
