@@ -96,7 +96,7 @@ var responseCompareTests = []struct {
 }
 
 func TestResponseCompare(t *testing.T) {
-	t.SkipNow()
+	//t.SkipNow()
 	for i, tt := range responseCompareTests {
 		got := tt.r.Compare(tt.res)
 		if !reflect.DeepEqual(got, tt.want) {
@@ -106,7 +106,7 @@ func TestResponseCompare(t *testing.T) {
 }
 
 func TestHeaderAddTo(t *testing.T) {
-	t.SkipNow()
+	//t.SkipNow()
 	h := Header{"A": {"foo"}, "B": {"bar", "baz"}}
 	r := &http.Request{Header: http.Header{}}
 
@@ -119,7 +119,7 @@ func TestHeaderAddTo(t *testing.T) {
 }
 
 func TestHeaderCompare(t *testing.T) {
-	t.SkipNow()
+	//t.SkipNow()
 	h := Header{"A": {"foo"}, "B": {"bar"}}
 	hh := http.Header{"A": {"foo", "bar"}, "C": {"helloworld"}, "B": {"bar"}}
 	if err := h.Compare(hh); err != nil {
@@ -171,14 +171,14 @@ var bodyerTests = []struct {
 	},
 	{
 		// TODO:(mkopriva) randomly fails/passes as the file's headers Content-Disposition
-		// Content-Type are not always serialized in the same order.
+		// and Content-Type are not always serialized in the same order.
 		MultipartBody{"A": {"foo", File{"text/plain", "hit-test.txt", "Test file content."}}}, multi,
 		"--testboundary\r\nContent-Disposition: form-data; name=\"A\"\r\n\r\nfoo\r\n--testboundary\r\nContent-Disposition: form-data; name=\"A\"; filename=\"hit-test.txt\"\r\nContent-Type: text/plain\r\n\r\nTest file content.\r\n--testboundary--\r\n", nil,
 	},
 }
 
 func TestBodyer(t *testing.T) {
-	t.SkipNow()
+	//t.SkipNow()
 	for i, tt := range bodyerTests {
 		if got, want := tt.bodyer.Type(), tt.wantType; got != want {
 			t.Errorf("#%d: type got %q, want %q", i, got, want)
