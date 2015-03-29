@@ -16,12 +16,12 @@ import (
 	"log"
 	"net/http"
 	"testing"
-	
+
 	"github.com/mkopriva/hit"
 )
 
 var hits = []hit.Hit{
-	{"/welcome", hit.MethodRequests{
+	{"/welcome", hit.Requests{
 		"GET": {{
 			Header: hit.Header{"Authorization": {"345j9rhtg0394"}},
 			Body:   nil,
@@ -32,7 +32,7 @@ var hits = []hit.Hit{
 			},
 		}},
 	}},
-	{"/user", hit.MethodRequests{
+	{"/user", hit.Requests{
 		"POST": {{
 			Header: nil,
 			Body:   hit.FormBody{"email": {"foo@example.com"}},
@@ -61,7 +61,7 @@ func TestAPI(t *testing.T) {
 	go func() {
 		log.Fatal(http.ListenAndServe(hit.Addr, nil))
 	}()
-	
+
 	for _, h := range hits {
 		h.Test(t)
 	}

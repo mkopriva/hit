@@ -38,7 +38,7 @@ const (
 // Hit represents a bunch of test cases against a specific endpoint.
 type Hit struct {
 	Path     string
-	Requests MethodRequests
+	Requests Requests
 }
 
 // Test executes all of the Hit's test Requests calling t.Error if any of them fail.
@@ -53,8 +53,8 @@ func (h Hit) Test(t *testing.T) {
 	}
 }
 
-// MethodRequests maps HTTP methods to a slice of Requests.
-type MethodRequests map[string][]Request
+// Requests maps HTTP methods to a slice of Requests.
+type Requests map[string][]Request
 
 // The type Request represents an HTTP request with its expected response.
 type Request struct {
@@ -111,7 +111,7 @@ func (r Request) Execute(method, path string) error {
 	return nil
 }
 
-// Response represent an HTTP response.
+// Response represents a trimmed down HTTP response.
 type Response struct {
 	Status int
 	Header Header
