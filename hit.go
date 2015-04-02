@@ -35,13 +35,16 @@ const (
 	StopColor   = "\033[0m"
 )
 
-// Hit represents a bunch of test cases against a specific endpoint.
+// Hit represents a bunch of test requests against a specific endpoint.
 type Hit struct {
-	Path     string
+	// the endpoint to be tested
+	Path string
+
+	// the requests to be made to the above specified endpoint
 	Requests Requests
 }
 
-// Test executes all of the Hit's test Requests calling t.Error if any of them fail.
+// Test executes all of the Hit's Requests.
 func (h Hit) Test(t *testing.T) {
 	for m, rr := range h.Requests {
 		for _, r := range rr {
@@ -53,10 +56,10 @@ func (h Hit) Test(t *testing.T) {
 	}
 }
 
-// Requests maps HTTP methods to a slice of Requests.
+// The type Requests maps HTTP methods to Request slices.
 type Requests map[string][]Request
 
-// The type Request represents an HTTP request with its expected response.
+// Request represents an HTTP request with its expected response.
 type Request struct {
 	Header Header
 	Body   Bodyer
