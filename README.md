@@ -68,3 +68,26 @@ func TestAPI(t *testing.T) {
 }
 
 ```
+
+Skipping Requests Example:
+
+```go
+
+var h := hit.Hit{
+	"/signin", hit.Requests{
+		"POST": {{
+			// skipping an individual Request
+			Skip: true,
+			Body: hit.FormBody{"email":{"jdoe@example.com"}, "pass":{"wrongpass"}}
+			Want: hit.Response{400, nil, nil},
+		}, {
+			Body: hit.FormBody{"email":{"jdoe@example.com"}, "pass":{"correctpass"}}
+			Want: hit.Response{ 302, hit.Header{"Location": {"http://example.com/account"}}, nil},
+		}},
+		// ...
+
+	// skipping all of Hit's Requests
+	}.Skip(),
+}
+
+```

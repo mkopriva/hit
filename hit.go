@@ -46,21 +46,41 @@ type Hit struct {
 
 // Test executes all of the Hit's Requests.
 func (h Hit) Test(t *testing.T) {
+	skipped := 0
 	for m, rr := range h.Requests {
 		for _, r := range rr {
+			if r.Skip {
+				skipped++
+				continue
+			}
 			err := r.Execute(m, h.Path)
 			if err != nil {
 				t.Error(err)
 			}
 		}
 	}
+	if skipped > 0 {
+		log.Printf("Warning: Skipped %d test(s) for %q.", skipped, h.Path)
+	}
 }
 
 // The type Requests maps HTTP methods to Request slices.
 type Requests map[string][]Request
 
+// Skip marks all the Requests' members to be skipped by the Hit when the
+// next test is executed.
+func (rs Requests) Skip() Requests {
+	for _, rr := range rs {
+		for i, _ := range rr {
+			rr[i].Skip = true
+		}
+	}
+	return rs
+}
+
 // Request represents an HTTP request with its expected response.
 type Request struct {
+	Skip   bool
 	Header Header
 	Body   Bodyer
 	Want   Response

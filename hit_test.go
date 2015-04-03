@@ -19,8 +19,8 @@ var requestExecuteTests = []struct {
 	r      Request
 	err    error
 }{
-	{"GET", "/foo/bar", Request{nil, nil, Response{200, nil, nil}}, nil},
-	{"GET", "/foo/bar", Request{Header{"Auth": {"6tygfd4"}}, nil, Response{
+	{"GET", "/foo/bar", Request{false, nil, nil, Response{200, nil, nil}}, nil},
+	{"GET", "/foo/bar", Request{false, Header{"Auth": {"6tygfd4"}}, nil, Response{
 		201,
 		Header{"Foo": {"baz"}},
 		JSONBody{"Hello": "World"},
@@ -194,5 +194,19 @@ func TestBodyer(t *testing.T) {
 		if got, want := string(b), tt.wantBody; got != want {
 			t.Errorf("#%d: body got %q, want %q", i, got, want)
 		}
+	}
+}
+
+func TestRequestsSkip(t *testing.T) {
+	got := Requests{
+		"GET":  {{}, {Skip: true}, {}},
+		"POST": {{}, {}},
+	}.Skip()
+	want := Requests{
+		"GET":  {{Skip: true}, {Skip: true}, {Skip: true}},
+		"POST": {{Skip: true}, {Skip: true}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
